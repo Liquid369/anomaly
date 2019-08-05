@@ -316,11 +316,11 @@ bool compareUint64(const uint64_t& value1, const uint64_t& value2){
 void createTestContractsAndBlocks(TestChain100Setup* testChain100Setup, valtype& code1, valtype& code2, valtype& code3, dev::Address addr){
     std::function<void(size_t n)> generateBlocks = [&](size_t n){
         dev::h256 oldHashStateRoot = globalState->rootHash();
-        dev::h256 oldHashUTXORoot = globalState->rootHashUTXO();
+        dev::h256 oldhashMerkleRoot = globalState->rootHashUTXO();
         for(size_t i = 0; i < n; i++)
             testChain100Setup->CreateAndProcessBlock({}, GetScriptForRawPubKey(testChain100Setup->coinbaseKey.GetPubKey()));
         globalState->setRoot(oldHashStateRoot);
-        globalState->setRootUTXO(oldHashUTXORoot);
+        globalState->setRootUTXO(oldhashMerkleRoot);
     };
 
     dev::h256 hashTemp(hash);

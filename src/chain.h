@@ -7,13 +7,14 @@
 #define BITCOIN_CHAIN_H
 
 #include <arith_uint256.h>
-#include <consensus/params.h>
 #include <primitives/block.h>
+#include <pow.h>
 #include <tinyformat.h>
 #include <uint256.h>
 
 #include <vector>
-
+#include <map>
+  
 /**
  * Maximum amount of time that a block timestamp is allowed to exceed the
  * current network-adjusted time before the block will be accepted.
@@ -182,6 +183,9 @@ public:
     //! pointer to the index of some further predecessor of this block
     CBlockIndex* pskip;
 
+    //ppcoin: trust score of block chain
+    uint256 bnChainTrust;
+
     //! height of the entry in the chain. The genesis block has height 0
     int nHeight;
 
@@ -197,6 +201,9 @@ public:
     //! (memory only) Total amount of work (expected number of hashes) in the chain up to and including this block
     arith_uint256 nChainWork;
 
+    //! (memory only) Total amount of work (only looking at PoW) in the chain up to and including this block
+    arith_uint256 nChainPoW;
+
     //! Number of transactions in this block.
     //! Note: in a potential headers-first mode, this number cannot be relied upon
     unsigned int nTx;
@@ -209,6 +216,28 @@ public:
     //! Verification status of this block. See enum BlockStatus
     uint32_t nStatus;
 
+    int64_t nAnonOutputs; // last index
+
+    bool fProofOfStake;
+    bool fProofOfFullNode;
+
+    unsigned int nFlags; // ppcoin: block index flags
+    enum {
+        BLOCK_PROOF_OF_STAKE = (1 << 0), // is proof-of-stake block
+        BLOCK_STAKE_ENTROPY = (1 << 1),  // entropy bit for stake modifier
+        BLOCK_STAKE_MODIFIER = (1 << 2), // regenerated stake modifier
+    };
+
+    // proof-of-stake specific fields
+    arith_uint256 GetBlockTrust() const;
+    arith_uint256 nStakeModifier;             // hash modifier for proof-of-stake
+    //unsigned int nStakeModifierChecksum; // checksum of index; in-memeory only
+    COutPoint prevoutStake;
+    unsigned int nStakeTime;
+    uint256 hashProofOfStake;
+    int64_t nMint;
+    int64_t nMoneySupply;
+
     //! block header
     int32_t nVersion;
     uint256 hashMerkleRoot;
@@ -217,13 +246,13 @@ public:
     uint32_t nNonce;
     uint256 hashStateRoot; // qtum
     uint256 hashUTXORoot; // qtum
+
+    //! Funds sent into the network to serve as an additional reward to stakers and miners
+    CAmount nNetworkRewardReserve;
+
     // block signature - proof-of-stake protect the block by signing the block using a stake holder private key
     std::vector<unsigned char> vchBlockSig;
-    uint256 nStakeModifier;
-    // proof-of-stake specific fields
-    COutPoint prevoutStake;
     uint256 hashProof; // qtum
-    uint64_t nMoneySupply;
 
     //! (memory only) Sequential id assigned to distinguish order in which blocks are received.
     int32_t nSequenceId;
@@ -231,35 +260,45 @@ public:
     //! (memory only) Maximum nTime in the chain up to and including this block.
     unsigned int nTimeMax;
 
+    //! (memory only) Maximum nTime in the chain up to and including this block.
+    uint32_t nMemFlags;
+
     void SetNull()
     {
         phashBlock = nullptr;
-        pprev = nullptr;
         pnext = nullptr;
+        pprev = nullptr;
         pskip = nullptr;
         nHeight = 0;
         nFile = 0;
         nDataPos = 0;
         nUndoPos = 0;
         nChainWork = arith_uint256();
+        nChainPoW = arith_uint256();
         nTx = 0;
         nChainTx = 0;
         nStatus = 0;
         nSequenceId = 0;
         nTimeMax = 0;
+        nMemFlags = 0;
+        nNetworkRewardReserve = 0;
+
+        //Proof-of-Stake
+        fProofOfStake = false;
+
+        nMint = 0;
+        nMoneySupply = 0;
+        nFlags = 0;
+        nStakeModifier = 0;
+        //nStakeModifierChecksum = 0;
+        prevoutStake.SetNull();
+        nStakeTime = 0;
 
         nVersion       = 0;
         hashMerkleRoot = uint256();
         nTime          = 0;
         nBits          = 0;
         nNonce         = 0;
-        hashStateRoot  = uint256(); // qtum
-        hashUTXORoot   = uint256(); // qtum
-        vchBlockSig.clear();
-        nStakeModifier = uint256();
-        hashProof = uint256();
-        prevoutStake.SetNull();
-        nMoneySupply = 0;
     }
 
     CBlockIndex()
@@ -276,13 +315,27 @@ public:
         nTime          = block.nTime;
         nBits          = block.nBits;
         nNonce         = block.nNonce;
+
         nMoneySupply   = 0;
-        hashStateRoot  = block.hashStateRoot; // qtum
-        hashUTXORoot   = block.hashUTXORoot; // qtum
-        nStakeModifier = uint256();
-        hashProof = uint256(); 
+        nStakeModifier = 0;
         prevoutStake   = block.prevoutStake; // qtum
-        vchBlockSig    = block.vchBlockSig; // qtum
+        hashProof = uint256(); 
+
+        //Proof of Stake
+        bnChainTrust = uint256();
+        nMint = 0;
+        nFlags = 0;
+        //nStakeModifierChecksum = 0;
+        hashProofOfStake = uint256();
+
+        /* if (block.IsProofOfStake()) {
+            SetProofOfStake();
+            prevoutStake = block.vtx[1]->vin[0].prevout;
+            nStakeTime = block.nTime;
+        } else {
+            prevoutStake.SetNull();
+            nStakeTime = 0;
+        }*/
     }
 
     CDiskBlockPos GetBlockPos() const {
@@ -309,20 +362,21 @@ public:
         block.nVersion       = nVersion;
         if (pprev)
             block.hashPrevBlock = pprev->GetBlockHash();
-        block.hashMerkleRoot = hashMerkleRoot;
-        block.nTime          = nTime;
-        block.nBits          = nBits;
-        block.nNonce         = nNonce;
-        block.hashStateRoot  = hashStateRoot; // qtum
-        block.hashUTXORoot   = hashUTXORoot; // qtum
-        block.vchBlockSig    = vchBlockSig;
-        block.prevoutStake   = prevoutStake;
+            block.hashMerkleRoot = hashMerkleRoot;
+            block.nTime          = nTime;
+            block.nBits          = nBits;
+            block.nNonce         = nNonce;
         return block;
     }
 
     uint256 GetBlockHash() const
     {
         return *phashBlock;
+    }
+
+    uint256 GetBlockPoWHash() const
+    {
+        return GetBlockHeader().GetPoWHash();
     }
 
     int64_t GetBlockTime() const
@@ -351,15 +405,37 @@ public:
         return pbegin[(pend - pbegin)/2];
     }
 
-    bool IsProofOfWork() const // qtum
+    bool IsProofOfWork() const
     {
-        return !IsProofOfStake();
+        return !(nFlags & BLOCK_PROOF_OF_STAKE);
     }
 
     bool IsProofOfStake() const
     {
-        return !prevoutStake.IsNull();
+        return (nFlags & BLOCK_PROOF_OF_STAKE);
     }
+
+    void SetProofOfStake()
+    {
+        nFlags |= BLOCK_PROOF_OF_STAKE;
+    }
+
+    unsigned int GetStakeEntropyBit() const;
+
+    bool SetStakeEntropyBit(unsigned int nEntropyBit)
+    {
+        if (nEntropyBit > 1)
+            return false;
+        nFlags |= (nEntropyBit ? BLOCK_STAKE_ENTROPY : 0);
+        return true;
+    }
+
+    bool GeneratedStakeModifier() const
+    {
+        return (nFlags & BLOCK_STAKE_MODIFIER);
+    }
+
+    void SetStakeModifier(uint64_t nModifier, bool fGeneratedStakeModifier);
 
     std::string ToString() const
     {
@@ -411,13 +487,16 @@ const CBlockIndex* LastCommonAncestor(const CBlockIndex* pa, const CBlockIndex* 
 class CDiskBlockIndex : public CBlockIndex
 {
 public:
+    uint256 hash;
     uint256 hashPrev;
 
     CDiskBlockIndex() {
+        hash = uint256();
         hashPrev = uint256();
     }
 
     explicit CDiskBlockIndex(const CBlockIndex* pindex) : CBlockIndex(*pindex) {
+        hash = (hash == uint256() ? pindex->GetBlockHash() : hash);
         hashPrev = (pprev ? pprev->GetBlockHash() : uint256());
     }
 
@@ -438,8 +517,23 @@ public:
             READWRITE(VARINT(nDataPos));
         if (nStatus & BLOCK_HAVE_UNDO)
             READWRITE(VARINT(nUndoPos));
-        READWRITE(VARINT(nMoneySupply));
 
+        READWRITE(nMint);
+        READWRITE(nMoneySupply);
+        READWRITE(nFlags);
+        READWRITE(nStakeModifier);
+        if (IsProofOfStake()) {
+            READWRITE(prevoutStake);
+            READWRITE(nStakeTime);
+            READWRITE(hashProofOfStake);
+        } else {
+            const_cast<CDiskBlockIndex*>(this)->prevoutStake.SetNull();
+            const_cast<CDiskBlockIndex*>(this)->nStakeTime = 0;
+            const_cast<CDiskBlockIndex*>(this)->hashProofOfStake = uint256();
+        }
+
+        // block hash
+        READWRITE(hash);
         // block header
         READWRITE(this->nVersion);
         READWRITE(hashPrev);
@@ -447,12 +541,6 @@ public:
         READWRITE(nTime);
         READWRITE(nBits);
         READWRITE(nNonce);
-        READWRITE(hashStateRoot); // qtum
-        READWRITE(hashUTXORoot); // qtum
-        READWRITE(nStakeModifier);
-        READWRITE(prevoutStake);
-        READWRITE(hashProof);
-        READWRITE(vchBlockSig); // qtum
     }
 
     uint256 GetBlockHash() const
@@ -464,10 +552,6 @@ public:
         block.nTime           = nTime;
         block.nBits           = nBits;
         block.nNonce          = nNonce;
-        block.hashStateRoot   = hashStateRoot; // qtum
-        block.hashUTXORoot    = hashUTXORoot; // qtum
-        block.vchBlockSig     = vchBlockSig;
-        block.prevoutStake    = prevoutStake;
         return block.GetHash();
     }
 
@@ -544,3 +628,4 @@ public:
 };
 
 #endif // BITCOIN_CHAIN_H
+

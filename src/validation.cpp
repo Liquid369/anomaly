@@ -17,6 +17,7 @@
 #include <cuckoocache.h>
 #include <hash.h>
 #include <index/txindex.h>
+#include <key_io.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
 #include <policy/rbf.h>
@@ -46,6 +47,9 @@
 #include <pubkey.h>
 #include <key.h>
 #include <wallet/wallet.h>
+
+#include <budget.h>
+#include <proofofstake/kernel.h>
 
 #include <future>
 #include <sstream>
@@ -1810,8 +1814,8 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 
-    globalState->setRoot(uintToh256(pindex->pprev->hashStateRoot)); // qtum
-    globalState->setRootUTXO(uintToh256(pindex->pprev->hashUTXORoot)); // qtum
+//    globalState->setRoot(uintToh256(pindex->pprev->hashStateRoot)); // qtum
+//    globalState->setRootUTXO(uintToh256(pindex->pprev->hashMerkleRoot)); // qtum
 
     if(pfClean == NULL && fLogEvents){
         pstorageresult->deleteResults(block.vtx);
@@ -2873,9 +2877,9 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1, MILLI * (nTime4 - nTime2), nInputs <= 1 ? 0 : MILLI * (nTime4 - nTime2) / (nInputs-1), nTimeVerify * MICRO, nTimeVerify * MILLI / nBlocksTotal);
 
 ////////////////////////////////////////////////////////////////// // qtum
-    checkBlock.hashMerkleRoot = BlockMerkleRoot(checkBlock);
+/*    checkBlock.hashMerkleRoot = BlockMerkleRoot(checkBlock);
     checkBlock.hashStateRoot = h256Touint(globalState->rootHash());
-    checkBlock.hashUTXORoot = h256Touint(globalState->rootHashUTXO());
+    checkBlock.hashMerkleRoot = h256Touint(globalState->rootHashUTXO());
 
     //If this error happens, it probably means that something with AAL created transactions didn't match up to what is expected
     if((checkBlock.GetHash() != block.GetHash()) && !fJustCheck)
@@ -2921,30 +2925,30 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                 }
             }
         }
-        if(checkBlock.hashUTXORoot != block.hashUTXORoot){
-            LogPrintf("Actual block data does not match hashUTXORoot expected by AAL block\n");
+        if(checkBlock.hashMerkleRoot != block.hashMerkleRoot){
+            LogPrintf("Actual block data does not match hashMerkleRoot expected by AAL block\n");
         }
         if(checkBlock.hashStateRoot != block.hashStateRoot){
             LogPrintf("Actual block data does not match hashStateRoot expected by AAL block\n");
         }
 
-        return state.DoS(100, error("ConnectBlock(): Incorrect AAL transactions or hashes (hashStateRoot, hashUTXORoot)"),
+        return state.DoS(100, error("ConnectBlock(): Incorrect AAL transactions or hashes (hashStateRoot, hashMerkleRoot)"),
                          REJECT_INVALID, "incorrect-transactions-or-hashes-block");
     }
 
     if (fJustCheck)
     {
         dev::h256 prevHashStateRoot(dev::sha3(dev::rlp("")));
-        dev::h256 prevHashUTXORoot(dev::sha3(dev::rlp("")));
-        if(pindex->pprev->hashStateRoot != uint256() && pindex->pprev->hashUTXORoot != uint256()){
+        dev::h256 prevhashMerkleRoot(dev::sha3(dev::rlp("")));
+        if(pindex->pprev->hashStateRoot != uint256() && pindex->pprev->hashMerkleRoot != uint256()){
             prevHashStateRoot = uintToh256(pindex->pprev->hashStateRoot);
-            prevHashUTXORoot = uintToh256(pindex->pprev->hashUTXORoot);
+            prevhashMerkleRoot = uintToh256(pindex->pprev->hashMerkleRoot);
         }
         globalState->setRoot(prevHashStateRoot);
-        globalState->setRootUTXO(prevHashUTXORoot);
+        globalState->setRootUTXO(prevhashMerkleRoot);
         return true;
     }
-//////////////////////////////////////////////////////////////////
+*///////////////////////////////////////////////////////////////////
 
     pindex->nMoneySupply = (pindex->pprev? pindex->pprev->nMoneySupply : 0) + nValueOut - nValueIn;
     //only start checking this error after block 5000 and only on testnet and mainnet, not regtest
@@ -3360,8 +3364,8 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
     {
         CCoinsViewCache view(pcoinsTip.get());
 
-        dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
-        dev::h256 oldHashUTXORoot(globalState->rootHashUTXO()); // qtum
+//        dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
+//        dev::h256 oldhashMerkleRoot(globalState->rootHashUTXO()); // qtum
 
         bool rv = ConnectBlock(blockConnecting, state, pindexNew, view, chainparams);
         GetMainSignals().BlockChecked(blockConnecting, state);
@@ -3369,8 +3373,8 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
             if (state.IsInvalid())
                 InvalidBlockFound(pindexNew, state);
 
-            globalState->setRoot(oldHashStateRoot); // qtum
-            globalState->setRootUTXO(oldHashUTXORoot); // qtum
+//            globalState->setRoot(oldHashStateRoot); // qtum
+//            globalState->setRootUTXO(oldhashMerkleRoot); // qtum
             pstorageresult->clearCacheResult();
             return error("ConnectTip(): ConnectBlock %s failed", pindexNew->GetBlockHash().ToString());
         }
@@ -4788,13 +4792,13 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
     if (!ContextualCheckBlock(block, state, chainparams.GetConsensus(), pindexPrev))
         return error("%s: Consensus::ContextualCheckBlock: %s", __func__, FormatStateMessage(state));
 
-    dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
-    dev::h256 oldHashUTXORoot(globalState->rootHashUTXO()); // qtum
+//    dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
+//    dev::h256 oldhashMerkleRoot(globalState->rootHashUTXO()); // qtum
     
     if (!g_chainstate.ConnectBlock(block, state, &indexDummy, viewNew, chainparams, true)){
         
-        globalState->setRoot(oldHashStateRoot); // qtum
-        globalState->setRootUTXO(oldHashUTXORoot); // qtum
+//        globalState->setRoot(oldHashStateRoot); // qtum
+//        globalState->setRootUTXO(oldhashMerkleRoot); // qtum
         pstorageresult->clearCacheResult();
         return false;
     }
@@ -5206,10 +5210,10 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
     int reportDone = 0;
 
 ////////////////////////////////////////////////////////////////////////// // qtum
-    dev::h256 oldHashStateRoot(globalState->rootHash());
-    dev::h256 oldHashUTXORoot(globalState->rootHashUTXO());
-    QtumDGP qtumDGP(globalState.get(), fGettingValuesDGP);
-//////////////////////////////////////////////////////////////////////////
+/*    dev::h256 oldHashStateRoot(globalState->rootHash());
+    dev::h256 oldhashMerkleRoot(globalState->rootHashUTXO());
+*/    QtumDGP qtumDGP(globalState.get(), fGettingValuesDGP);
+ //////////////////////////////////////////////////////////////////////////
 
     LogPrintf("[0%%]..."); /* Continued */
     for (pindex = chainActive.Tip(); pindex && pindex->pprev; pindex = pindex->pprev) {
@@ -5286,20 +5290,20 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
             if (!ReadBlockFromDisk(block, pindex, chainparams.GetConsensus()))
                 return error("VerifyDB(): *** ReadBlockFromDisk failed at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
 
-            dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
-            dev::h256 oldHashUTXORoot(globalState->rootHashUTXO()); // qtum
+//            dev::h256 oldHashStateRoot(globalState->rootHash()); // qtum
+//            dev::h256 oldhashMerkleRoot(globalState->rootHashUTXO()); // qtum
 
             if (!g_chainstate.ConnectBlock(block, state, pindex, coins, chainparams)){
 
-                globalState->setRoot(oldHashStateRoot); // qtum
-                globalState->setRootUTXO(oldHashUTXORoot); // qtum
+//                globalState->setRoot(oldHashStateRoot); // qtum
+//                globalState->setRootUTXO(oldhashMerkleRoot); // qtum
                 pstorageresult->clearCacheResult();
                 return error("VerifyDB(): *** found unconnectable block at %d, hash=%s (%s)", pindex->nHeight, pindex->GetBlockHash().ToString(), FormatStateMessage(state));
             }
         }
-    } else {
-        globalState->setRoot(oldHashStateRoot); // qtum
-        globalState->setRootUTXO(oldHashUTXORoot); // qtum
+//    } else {
+//        globalState->setRoot(oldHashStateRoot); // qtum
+//        globalState->setRootUTXO(oldhashMerkleRoot); // qtum
     }
 
     LogPrintf("[DONE].\n");

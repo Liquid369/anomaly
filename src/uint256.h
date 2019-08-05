@@ -131,7 +131,17 @@ public:
 class uint256 : public base_blob<256> {
 public:
     uint256() {}
+    explicit uint256(const char* psz) { SetHex(psz); }
+    explicit uint256(const std::string& strHex) { SetHex(strHex); }
     explicit uint256(const std::vector<unsigned char>& vch) : base_blob<256>(vch) {}
+
+    int GetNibble(int index) const
+    {
+        index = 63 - index;
+        if (index % 2 == 1)
+            return(data[index / 2] >> 4);
+        return(data[index / 2] & 0x0F);
+    }
 
     /** A cheap hash function that just returns 64 bits from the result, it can be
      * used when the contents are considered uniformly random. It is not appropriate
@@ -192,6 +202,23 @@ inline uint256 u256Touint(const dev::u256& in)
     dev::toBigEndian<dev::u256, dev::bytes>(in, rawValue);
 	return uint256(rawValue);
 }
+
+/** 512-bit opaque blob.
+ * @note This type is called uint512 for historical reasons only. It is an
+ * opaque blob of 512 bits and has no integer operations.
+ */
+class uint512 : public base_blob<512> {
+public:
+    uint512() {}
+    uint512(const base_blob<512>& b) : base_blob<512>(b) {}
+    explicit uint512(const std::vector<unsigned char>& vch) : base_blob<512>(vch) {}
+    uint256 trim256() const
+    {
+        uint256 result;
+        memcpy((void*)&result, (void*)data, 32);
+        return result;
+    }
+};
 //////////////////////////////////////////////////////
 
 #endif // BITCOIN_UINT256_H

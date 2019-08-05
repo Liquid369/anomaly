@@ -103,7 +103,7 @@ TestingSetup::TestingSetup(const std::string& chainName) : BasicTestingSetup(cha
         dev::eth::ChainParams cp((dev::eth::genesisInfo(dev::eth::Network::qtumTestNetwork)));
         globalSealEngine = std::unique_ptr<dev::eth::SealEngineFace>(cp.createSealEngine());
         globalState->populateFrom(cp.genesisState);
-        globalState->setRootUTXO(uintToh256(chainparams.GenesisBlock().hashUTXORoot));
+        globalState->setRootUTXO(uintToh256(chainparams.GenesisBlock().hashMerkleRoot));
         globalState->db().commit();
         globalState->dbUtxo().commit();
         pstorageresult.reset(new StorageResults(pathTemp.string()));

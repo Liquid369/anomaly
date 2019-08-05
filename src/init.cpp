@@ -1577,11 +1577,11 @@ bool AppInitMain()
                 }
 
                 if(chainActive.Tip() != nullptr){
-                    globalState->setRoot(uintToh256(chainActive.Tip()->hashStateRoot));
-                    globalState->setRootUTXO(uintToh256(chainActive.Tip()->hashUTXORoot));
+                    globalState->setRoot(uintToh256(chainActive.Tip()->hashMerkleRoot));
+                    globalState->setRootUTXO(uintToh256(chainActive.Tip()->hashMerkleRoot));
                 } else {
                     globalState->setRoot(dev::sha3(dev::rlp("")));
-                    globalState->setRootUTXO(uintToh256(chainparams.GenesisBlock().hashUTXORoot));
+//                    globalState->setRootUTXO(uintToh256(chainparams.GenesisBlock().hashMerkleRoot));
                     globalState->populateFrom(cp.genesisState);
                 }
                 globalState->db().commit();

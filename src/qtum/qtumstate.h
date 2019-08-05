@@ -119,22 +119,22 @@ private:
 struct TemporaryState{
     std::unique_ptr<QtumState>& globalStateRef;
     dev::h256 oldHashStateRoot;
-    dev::h256 oldHashUTXORoot;
+    dev::h256 oldhashMerkleRoot;
 
     TemporaryState(std::unique_ptr<QtumState>& _globalStateRef) : 
         globalStateRef(_globalStateRef),
         oldHashStateRoot(globalStateRef->rootHash()), 
-        oldHashUTXORoot(globalStateRef->rootHashUTXO()) {}
+        oldhashMerkleRoot(globalStateRef->rootHashUTXO()) {}
                 
-    void SetRoot(dev::h256 newHashStateRoot, dev::h256 newHashUTXORoot)
+    void SetRoot(dev::h256 newHashStateRoot, dev::h256 newhashMerkleRoot)
     {
         globalStateRef->setRoot(newHashStateRoot);
-        globalStateRef->setRootUTXO(newHashUTXORoot);
+        globalStateRef->setRootUTXO(newhashMerkleRoot);
     }
 
     ~TemporaryState(){
         globalStateRef->setRoot(oldHashStateRoot);
-        globalStateRef->setRootUTXO(oldHashUTXORoot);
+        globalStateRef->setRootUTXO(oldhashMerkleRoot);
     }
     TemporaryState() = delete;
     TemporaryState(const TemporaryState&) = delete;

@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -9,8 +9,7 @@
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <uint256.h>
-
-static const int SER_WITHOUT_SIGNATURE = 1 << 3;
+#include <hash.h>
 
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
@@ -26,14 +25,13 @@ public:
     int32_t nVersion;
     uint256 hashPrevBlock;
     uint256 hashMerkleRoot;
+    // uint256 hashVeilData; // Serialzie hash of CVeilBlockData(hashMerkleRoot, hashAccumulators, hashWitnessMerkleRoot, hashPoFN)
     uint32_t nTime;
     uint32_t nBits;
     uint32_t nNonce;
-    uint256 hashStateRoot; // qtum
-    uint256 hashUTXORoot; // qtum
-    // proof-of-stake specific fields
     COutPoint prevoutStake;
-    std::vector<unsigned char> vchBlockSig;
+    uint8_t fProofOfStake;
+    uint8_t fProofOfFullNode;
 
     CBlockHeader()
     {
@@ -44,17 +42,18 @@ public:
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(this->nVersion);
+        READWRITE(nVersion);
         READWRITE(hashPrevBlock);
         READWRITE(hashMerkleRoot);
+        // READWRITE(hashVeilData);
         READWRITE(nTime);
         READWRITE(nBits);
         READWRITE(nNonce);
-        READWRITE(hashStateRoot); // qtum
-        READWRITE(hashUTXORoot); // qtum
         READWRITE(prevoutStake);
-        if (!(s.GetType() & SER_WITHOUT_SIGNATURE))
-            READWRITE(vchBlockSig);
+        if (!(s.GetType() & SER_GETHASH)) {
+            READWRITE(fProofOfStake);
+            READWRITE(fProofOfFullNode);
+        }
     }
 
     void SetNull()
@@ -62,12 +61,12 @@ public:
         nVersion = 0;
         hashPrevBlock.SetNull();
         hashMerkleRoot.SetNull();
+        // hashVeilData.SetNull();
         nTime = 0;
         nBits = 0;
         nNonce = 0;
-        hashStateRoot.SetNull(); // qtum
-        hashUTXORoot.SetNull(); // qtum
-        vchBlockSig.clear();
+        fProofOfStake = 0;
+        fProofOfFullNode = 0;
         prevoutStake.SetNull();
     }
 
@@ -78,24 +77,19 @@ public:
 
     uint256 GetHash() const;
 
+    uint256 GetPoWHash() const;
     uint256 GetHashWithoutSign() const;
-
+    
     int64_t GetBlockTime() const
     {
         return (int64_t)nTime;
-    }
-    
-    // ppcoin: two types of block: proof-of-work or proof-of-stake
+    };
+     // ppcoin: two types of block: proof-of-work or proof-of-stake
     virtual bool IsProofOfStake() const //qtum
     {
         return !prevoutStake.IsNull();
     }
 
-    virtual bool IsProofOfWork() const
-    {
-        return !IsProofOfStake();
-    }
-    
     virtual uint32_t StakeTime() const
     {
         uint32_t ret = 0;
@@ -106,34 +100,26 @@ public:
         return ret;
     }
 
-    CBlockHeader& operator=(const CBlockHeader& other) //qtum
+    virtual bool IsProofOfWork() const
     {
-        if (this != &other)
-        {
-            this->nVersion       = other.nVersion;
-            this->hashPrevBlock  = other.hashPrevBlock;
-            this->hashMerkleRoot = other.hashMerkleRoot;
-            this->nTime          = other.nTime;
-            this->nBits          = other.nBits;
-            this->nNonce         = other.nNonce;
-            this->hashStateRoot  = other.hashStateRoot;
-            this->hashUTXORoot   = other.hashUTXORoot;
-            this->vchBlockSig    = other.vchBlockSig;
-            this->prevoutStake   = other.prevoutStake;
-        }
-        return *this;
+        return !IsProofOfStake();
     }
-};
 
+    virtual ~CBlockHeader(){};
+};
 
 class CBlock : public CBlockHeader
 {
 public:
     // network and disk
     std::vector<CTransactionRef> vtx;
+    std::vector<unsigned char> vchBlockSig;
 
     // memory only
+    mutable CTxOut txoutMasternode;
+    mutable std::vector<CTxOut> voutSuperblock;
     mutable bool fChecked;
+    mutable bool fSignaturesVerified;
 
     CBlock()
     {
@@ -152,6 +138,12 @@ public:
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITEAS(CBlockHeader, *this);
         READWRITE(vtx);
+        READWRITE(hashMerkleRoot);
+        // READWRITE(hashWitnessMerkleRoot);
+        if (IsProofOfStake()) {
+            // READWRITE(hashPoFN);
+            READWRITE(vchBlockSig);
+        }
     }
 
     void SetNull()
@@ -159,6 +151,12 @@ public:
         CBlockHeader::SetNull();
         vtx.clear();
         fChecked = false;
+		vchBlockSig.clear();
+
+        hashMerkleRoot = uint256();
+        // hashWitnessMerkleRoot = uint256();
+        // hashPoFN = uint256();
+        fSignaturesVerified = false;
     }
 
     std::pair<COutPoint, unsigned int> GetProofOfStake() const //qtum
@@ -172,15 +170,26 @@ public:
         block.nVersion       = nVersion;
         block.hashPrevBlock  = hashPrevBlock;
         block.hashMerkleRoot = hashMerkleRoot;
+        //block.hashVeilData   = SerializeHash(veilBlockData);
         block.nTime          = nTime;
         block.nBits          = nBits;
         block.nNonce         = nNonce;
-        block.hashStateRoot  = hashStateRoot; // qtum
-        block.hashUTXORoot   = hashUTXORoot; // qtum
-        block.vchBlockSig    = vchBlockSig;
         block.prevoutStake   = prevoutStake;
+        block.fProofOfStake = IsProofOfStake();
+        block.fProofOfFullNode = fProofOfFullNode;
         return block;
     }
+
+    // two types of block: proof-of-work or proof-of-stake
+/*      bool IsProofOfStake() const
+    {
+        return (vtx.size() > 1 && vtx[1]->IsCoinStake());
+    }
+
+    bool IsProofOfWork() const
+    {
+        return !IsProofOfStake();
+    }*/
 
     std::string ToString() const;
 };
